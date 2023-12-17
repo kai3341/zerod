@@ -1,0 +1,224 @@
+#!/bin/bash
+
+# LICENSE: BSD
+# https://github.com/kai3341/zerod
+
+ME=`basename "$0"`
+CWD="$PWD"
+
+MY_DIR=".${ME}"
+CONFIG="${MY_DIR}/config"
+LOG="${MY_DIR}/log"
+SCRIPT_DIR="${MY_DIR}/scripts"
+
+COLOR_OUT=$'\033[0;36m'
+COLOR_ERR=$'\033[0;31m'
+COLOR_DBG=$'\033[0;32m'
+COLOR_CRT=$'\033[0;41m'
+COLOR_CLR=$'\033[0m'
+
+LOG_STDOUT='O|'
+LOG_STDERR='E|'
+
+info() { echo "${COLOR_DBG}$@${COLOR_CLR}"; }
+crit() { echo "${COLOR_CRT}$@${COLOR_CLR}" >&2; }
+
+# pidlist: SELECT pid WHERE cmd="$CMD" AND cwd="$CWD"
+
+pidlist__pwdx() {
+    pids=`pgrep -d ' ' -fx "$1"`
+    [ -n "$pids" ] && pwdx $pids | grep "$CWD" | cut -f 1 -d ':'
+}
+
+pidlist__lsof() {
+    pids=`pgrep -fx "$1" | xargs -rI {} echo -p {}`
+    [ -n "$pids" ] && \
+        lsof -wn $pids | grep ' cwd ' | grep "$CWD" | cut -d ' ' -f 3
+}
+
+# waitpid: Wait untill process is stoped
+
+waitpid__tail() { tail --pid=$1 -f /dev/null; }
+waitpid__lsof() { lsof -wp $1 +r 1 &>/dev/null; }
+
+# unbuffered
+
+unbuffered__stdbuf() { echo stdbuf -oL $@; }
+unbuffered__null() { echo $@; }
+
+# HELP
+
+HELP_USAGE="\
+USAGE:
+$0 init
+$0 start
+$0 stop
+$0 restart
+$0 log tail
+$0 log clear
+$0 ps
+$0 run  # script
+"
+
+CONFIG_EXAMPLE="\
+CMD=\"/usr/bin/python3 /usr/bin/dstat\"  # required
+# RESTART=1  # optional. Restart command when it stoped
+# MANY=1  # optional. Allow to start many instancies
+"
+
+HELP_CONFIG="\
+Config file \`$CONFIG\`:
+$CONFIG_EXAMPLE"
+
+show_help() {
+    echo "$HELP_USAGE"
+    show_help__scripts
+    echo "$HELP_CONFIG"
+}
+
+show_help__scripts() {
+    if [ -d "$SCRIPT_DIR" ]; then
+        echo "SCRIPTS AVAILABLE:"
+        ls -1Q "$SCRIPT_DIR" | xargs -rI {} echo $0 run \"{}\"
+        echo
+    else
+        echo "You may to create \`$SCRIPT_DIR\` directory to put scripts here"
+    fi
+    echo "Scripts support passing arguments: \`$0 run example arg1 arg2 ...\`"
+    echo "Script will be called from current directory \`$CWD\` with extra" \
+    "environment variable \`ME\` refering this script: \`$0\`"
+    echo
+}
+
+not_found() {
+    crit "$1 found in current working directory: \`$CWD\`. You have to create it"
+    info "You may run \`$ME init\` to create config examle"
+    echo && show_help && exit 1
+}
+
+do_init() {
+    [ ! -d "$MY_DIR" ] && mkdir "$MY_DIR"
+    [ ! -d "$SCRIPT_DIR" ] && mkdir "$SCRIPT_DIR"
+    [ -f "$CONFIG" ] && crit "Config \`$CONFIG\` already exists" && exit 1
+    echo "$CONFIG_EXAMPLE" > "$CONFIG"
+    exit 0
+}
+
+
+
+if [[ "$OSTYPE" =~ ^linux ]]; then
+    pidlist=pidlist__pwdx
+    waitpid=waitpid__tail
+    unbuffered=unbuffered__stdbuf
+elif [[ "$OSTYPE" =~ ^darwin ]]; then
+    pidlist=pidlist__lsof
+    waitpid=waitpid__lsof
+    unbuffered=unbuffered__null
+else
+    echo "Unknown platform! Can't run"
+    exit 1
+fi
+
+waitpids() { for i in "$@"; do $waitpid $i; done; }
+
+stop_cmd() {
+    pids=`$pidlist "$1"`
+    [ -n "$pids" ] && info "Stopping: \`$1\`" && kill $pids \
+        && waitpids $pids && info "+Stopped: \`$1\`"
+}
+
+logging_handle() {
+    $unbuffered awk \'{printf \"$1\" strftime\(\"%F\|%T\|\", systime\(\)\) \$0 \"\\n\"}\'
+}
+
+# === SETUP ===
+
+[ "$1" == "init" ] && do_init
+
+[ ! -d "$MY_DIR" ] && not_found "No directory \`$MY_DIR\`"
+[ ! -f "$CONFIG" ] && not_found "No config file \`$CONFIG\`"
+
+. "$CONFIG"
+
+[ -z "$CMD" ] && echo "Required parameter \`CMD\` not set" && show_help && exit 1
+
+if [ -n "$RESTART" ]; then
+    RUNCMD="bash -c 'while true; do ${CMD}; sleep 1; done'"
+else
+    RUNCMD="$CMD"
+fi
+
+COLORIZE=""\
+"s%^${LOG_STDOUT}%${COLOR_OUT}%g;"\
+"s%^${LOG_STDERR}%${COLOR_ERR}%g;"\
+"s%$%${COLOR_CLR}%g"
+
+# ===
+
+case $1 in
+    start)
+        shift
+        if [ -z "$MANY" ]; then
+            pids="$(echo `$pidlist "$CMD"`)"
+            [ -n "$pids" ] && crit "Already runing: ${pids}" && exit 1
+        fi
+        info "Starting: \`$CMD\`"
+        bash -c "nohup ${RUNCMD} \
+            > >(`logging_handle $LOG_STDOUT` >> '$LOG') \
+            2> >(`logging_handle $LOG_STDERR` >> '$LOG') &";
+    ;;
+
+    stop)
+        shift
+        [ -n "$RESTART" ] && stop_cmd "`tr -d \' <<< "$RUNCMD"`"
+        stop_cmd "$CMD"
+    ;;
+
+    restart)
+        "$0" stop
+        "$0" start
+    ;;
+
+    log)
+        shift
+        case $1 in
+            tail)
+                tail -n 300 -f "$LOG" | `$unbuffered sed -e "$COLORIZE"`
+            ;;
+
+            clear)
+                echo -n > "$LOG"
+            ;;
+
+            *)
+                show_help
+                exit 1
+            ;;
+        esac;
+    ;;
+
+    ps)
+        shift
+        pids=`$pidlist "${CMD}"`
+        [ -n "$pids" ] && ps -f `echo $pids | xargs -I {} echo -p {}` || true
+    ;;
+
+    run)
+        shift
+        [ -z "$1" ] && show_help__scripts && exit 1
+        script="${SCRIPT_DIR}/$1"
+        [ ! -f "$script" ] && \
+            echo "Script \`$1\` not found in \`${SCRIPT_DIR}\`" && exit 1
+        shift
+        ME="$0" "$script" $@
+    ;;
+
+    --help)
+        show_help
+    ;;
+
+    *)
+        show_help
+        exit 1
+    ;;
+esac;
