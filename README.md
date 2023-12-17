@@ -57,6 +57,6 @@ Clear old logs
 
 List of `zerod` controlled processess. Check it after `CMD` changing
 
-# `./zerod run`  # script
+## `./zerod run`  # script
 
 You may add your scripts into `.zerod/scripts` directory
