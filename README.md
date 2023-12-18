@@ -63,4 +63,6 @@ List of `zerod` controlled processess. Check it after `CMD` changing
 
 ## `./zerod run`  # script
 
-You may add your scripts into `.zerod/scripts` directory
+You may add your scripts into `.zerod/scripts` directory. Script working
+directory will be the same as `./zerod` script is called. Environment variable
+`ZEROD` is passed to script referring to previously called `./zerod` script
