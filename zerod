@@ -1,15 +1,19 @@
 #!/bin/bash
 
 # LICENSE: BSD
+# VERSION: 1.1
 # https://github.com/kai3341/zerod
 
-ME=`basename "$0"`
+ZEROD=`basename "$0"`
 CWD="$PWD"
 
-MY_DIR=".${ME}"
-CONFIG="${MY_DIR}/config"
-LOG="${MY_DIR}/log"
-SCRIPT_DIR="${MY_DIR}/scripts"
+ZEROD_DIR=".${ZEROD}"
+CONFIG="${ZEROD_DIR}/config"
+ZEROD_TEMP_DIR="${ZEROD_DIR}/zerod.temp"  # put zerod.temp/ into .gitignore
+ZEROD_PID_DIR="${ZEROD_TEMP_DIR}/pid"
+ZEROD_RESTART_PID_DIR="${ZEROD_TEMP_DIR}/pid_restart"
+LOG="${ZEROD_TEMP_DIR}/log"
+SCRIPT_DIR="${ZEROD_DIR}/scripts"
 
 COLOR_OUT=$'\033[0;36m'
 COLOR_ERR=$'\033[0;31m'
@@ -20,21 +24,20 @@ COLOR_CLR=$'\033[0m'
 LOG_STDOUT='O|'
 LOG_STDERR='E|'
 
+STARTUP_HASH=`last reboot --limit 1 | head -n 1 | md5sum  | cut -d ' ' -f 1`
+
 info() { echo "${COLOR_DBG}$@${COLOR_CLR}"; }
 crit() { echo "${COLOR_CRT}$@${COLOR_CLR}" >&2; }
 
-# pidlist: SELECT pid WHERE cmd="$CMD" AND cwd="$CWD"
-
-pidlist__pwdx() {
-    pids=`pgrep -d ' ' -fx "$1"`
-    [ -n "$pids" ] && pwdx $pids | grep "$CWD" | cut -f 1 -d ':'
+pidlist_aux() {
+    for pidfile in `ls -1 "${1}/"`; do
+        pidfilepath="${1}/${pidfile}"
+        [ "$STARTUP_HASH" == `cat "$pidfilepath"` ] && echo $pidfile || rm -f "$pidfilepath"
+    done
 }
 
-pidlist__lsof() {
-    pids=`pgrep -fx "$1" | xargs -rI {} echo -p {}`
-    [ -n "$pids" ] && \
-        lsof -wn $pids | grep ' cwd ' | grep "$CWD" | cut -d ' ' -f 3
-}
+pidlist() { pidlist_aux "${ZEROD_PID_DIR}"; }
+pidlist_restart() { pidlist_aux "${ZEROD_RESTART_PID_DIR}"; }
 
 # waitpid: Wait untill process is stoped
 
@@ -86,32 +89,30 @@ show_help__scripts() {
     fi
     echo "Scripts support passing arguments: \`$0 run example arg1 arg2 ...\`"
     echo "Script will be called from current directory \`$CWD\` with extra" \
-    "environment variable \`ME\` refering this script: \`$0\`"
+    "environment variable \`ZEROD\` refering this script: \`$0\`"
     echo
 }
 
 not_found() {
     crit "$1 found in current working directory: \`$CWD\`. You have to create it"
-    info "You may run \`$ME init\` to create config examle"
+    info "You may run \`$ZEROD init\` to create config examle"
     echo && show_help && exit 1
 }
 
 do_init() {
-    [ ! -d "$MY_DIR" ] && mkdir "$MY_DIR"
+    [ ! -d "$ZEROD_DIR" ] && mkdir "$ZEROD_DIR"
     [ ! -d "$SCRIPT_DIR" ] && mkdir "$SCRIPT_DIR"
     [ -f "$CONFIG" ] && crit "Config \`$CONFIG\` already exists" && exit 1
     echo "$CONFIG_EXAMPLE" > "$CONFIG"
     exit 0
 }
 
-
+# === OS compat ===
 
 if [[ "$OSTYPE" =~ ^linux ]]; then
-    pidlist=pidlist__pwdx
     waitpid=waitpid__tail
     unbuffered=unbuffered__stdbuf
 elif [[ "$OSTYPE" =~ ^darwin ]]; then
-    pidlist=pidlist__lsof
     waitpid=waitpid__lsof
     unbuffered=unbuffered__null
 else
@@ -121,10 +122,8 @@ fi
 
 waitpids() { for i in "$@"; do $waitpid $i; done; }
 
-stop_cmd() {
-    pids=`$pidlist "$1"`
-    [ -n "$pids" ] && info "Stopping: \`$1\`" && kill $pids \
-        && waitpids $pids && info "+Stopped: \`$1\`"
+stop_pids() {
+    [ -n "$1" ] && info "Stopping: $@" && kill $@ && waitpids $@ && info "+Stopped: $@"
 }
 
 logging_handle() {
@@ -135,17 +134,19 @@ logging_handle() {
 
 [ "$1" == "init" ] && do_init
 
-[ ! -d "$MY_DIR" ] && not_found "No directory \`$MY_DIR\`"
+[ ! -d "$ZEROD_DIR" ] && not_found "No directory \`$ZEROD_DIR\`"
 [ ! -f "$CONFIG" ] && not_found "No config file \`$CONFIG\`"
+
+mkdir -p "$ZEROD_TEMP_DIR" "$ZEROD_PID_DIR" "$ZEROD_RESTART_PID_DIR"
 
 . "$CONFIG"
 
-[ -z "$CMD" ] && echo "Required parameter \`CMD\` not set" && show_help && exit 1
+[ -z "$CMD" ] && crit "Required parameter \`CMD\` not set" && show_help && exit 1
+
+RUNCMD="bash -c \"${CMD} & PIDFILE=\\\"${ZEROD_PID_DIR}/\\\$!\\\"; echo -n ${STARTUP_HASH} > \\\"\\\$PIDFILE\\\"; wait \\\$!; rm -f \\\"\\\$PIDFILE\\\"\"" #"
 
 if [ -n "$RESTART" ]; then
-    RUNCMD="bash -c 'while true; do ${CMD}; sleep 1; done'"
-else
-    RUNCMD="$CMD"
+    RUNCMD="bash -c 'echo ${STARTUP_HASH} > \"${ZEROD_RESTART_PID_DIR}/\$\$\"; while true; do ${RUNCMD}; sleep 1; done;'"
 fi
 
 COLORIZE=""\
@@ -159,7 +160,7 @@ case $1 in
     start)
         shift
         if [ -z "$MANY" ]; then
-            pids="$(echo `$pidlist "$CMD"`)"
+            pids=`pidlist`
             [ -n "$pids" ] && crit "Already runing: ${pids}" && exit 1
         fi
         info "Starting: \`$CMD\`"
@@ -170,8 +171,8 @@ case $1 in
 
     stop)
         shift
-        [ -n "$RESTART" ] && stop_cmd "`tr -d \' <<< "$RUNCMD"`"
-        stop_cmd "$CMD"
+        [ -n "$RESTART" ] && stop_pids `pidlist_restart`
+        stop_pids `pidlist`
     ;;
 
     restart)
@@ -199,7 +200,7 @@ case $1 in
 
     ps)
         shift
-        pids=`$pidlist "${CMD}"`
+        pids=`pidlist`
         [ -n "$pids" ] && ps -f `echo $pids | xargs -I {} echo -p {}` || true
     ;;
 
@@ -208,9 +209,9 @@ case $1 in
         [ -z "$1" ] && show_help__scripts && exit 1
         script="${SCRIPT_DIR}/$1"
         [ ! -f "$script" ] && \
-            echo "Script \`$1\` not found in \`${SCRIPT_DIR}\`" && exit 1
+            crit "Script \`$1\` not found in \`${SCRIPT_DIR}\`" && exit 1
         shift
-        ME="$0" "$script" $@
+        ZEROD="$0" "$script" $@
     ;;
 
     --help)
