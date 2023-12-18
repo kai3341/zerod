@@ -6,11 +6,17 @@ This tool is designed for cases when supervisord or systemd is too heavy for you
 It should be interesting for development purpose or in running something
 "without obligations"
 
+Should work on Linux and MacOS. It's possible to make it running on other unix
+
 # Usage
 
 Put `zerod` script into your working directory and make it executable
+
 Remember: `zerod` is name-agnostic: you may rename it as you want, or make
 its copy or symlink
+
+If you decided to put `zerod` script into your git repository, don't forget to
+append your `.gitignore` file with `zerod.temp/` line
 
 ## `./zerod init`
 
@@ -19,9 +25,7 @@ Then you have to open `.zerod` directory and change example `config` file:
 
 ### Zerod config
 
-The main variable you have to set is `CMD` variable. Try to run your command and
-check its full command via `ps -f`. For example, `dstat` is python script, but
-its full command a little bit different
+The main variable you have to set is `CMD` variable
 
 Also you may allow `zerod` to run many instancies of `CMD` via setting `MANY=1`
 
