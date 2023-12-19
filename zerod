@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # LICENSE: BSD
-# VERSION: 1.1
+# VERSION: 1.1.1
 # https://github.com/kai3341/zerod
 
 ZEROD=`basename "$0"`
@@ -126,6 +126,16 @@ stop_pids() {
     [ -n "$1" ] && info "Stopping: $@" && kill $@ && waitpids $@ && info "+Stopped: $@"
 }
 
+stop_master_pids() {
+    if [ -n "$1" ]; then
+        info "Stopping master: $@"
+        kill $@
+        waitpids $@
+        for pid in $@; do rm "${ZEROD_RESTART_PID_DIR}/${pid}"; done
+        info "+Stopped master: $@"
+    fi
+}
+
 logging_handle() {
     $unbuffered awk \'{printf \"$1\" strftime\(\"%F\|%T\|\", systime\(\)\) \$0 \"\\n\"}\'
 }
@@ -171,7 +181,7 @@ case $1 in
 
     stop)
         shift
-        [ -n "$RESTART" ] && stop_pids `pidlist_restart`
+        [ -n "$RESTART" ] && stop_master_pids `pidlist_restart`
         stop_pids `pidlist`
     ;;
 
