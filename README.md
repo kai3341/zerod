@@ -18,7 +18,7 @@ its copy or symlink
 If you decided to put `zerod` script into your git repository, don't forget to
 append your `.gitignore` file with `zerod.temp/` line
 
-## `./zerod init`
+## `./zerod init` (getting started)
 
 Let `zerod` to build small example config. It should create `.zerod` directory.
 Then you have to open `.zerod` directory and change example `config` file:
@@ -48,6 +48,8 @@ Stops **all** instancies of `CMD` and then starts once
 ## Zerod logs
 
 Logs are stored in `.zerod/log` file, but I've add useful commands
+
+![log_tail](img/log_tail.png "Zerod logs")
 
 ### `./zerod log tail`
 
