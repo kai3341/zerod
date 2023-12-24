@@ -1,3 +1,8 @@
+# 1.1.3
+- Fix double rm of pidfile without `RESTART=1`
+- Fix `returncode` logging
+- Update README
+
 # 1.1.2
 - Unify and fix `stop` command. Yes, again
 - Reduce command nesting level
