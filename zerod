@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # LICENSE: BSD
-# VERSION: 1.1.1
+# VERSION: 1.1.2
 # https://github.com/kai3341/zerod
 
 ZEROD=`basename "$0"`
@@ -23,6 +23,7 @@ COLOR_CLR=$'\033[0m'
 
 LOG_STDOUT='O|'
 LOG_STDERR='E|'
+LOG__ZEROD='X|'
 
 STARTUP_HASH=`last reboot --limit 1 | head -n 1 | md5sum  | cut -d ' ' -f 1`
 
@@ -116,25 +117,32 @@ elif [[ "$OSTYPE" =~ ^darwin ]]; then
     waitpid=waitpid__lsof
     unbuffered=unbuffered__null
 else
-    echo "Unknown platform! Can't run"
-    exit 1
+    crit "Unknown platform! Can't run" && exit 1
 fi
 
 waitpids() { for i in "$@"; do $waitpid $i; done; }
 
-stop_pids() {
-    [ -n "$1" ] && info "Stopping: $@" && kill $@ && waitpids $@ && info "+Stopped: $@"
-}
+tolog_template() { echo "echo \"${LOG__ZEROD}\$(date \"+%F|%T\")|$1\" >> \"$LOG\""; }
+TOLOG=`tolog_template '$@'`
 
-stop_master_pids() {
+zerod_log() { info $@; eval $TOLOG; }
+
+stop_pids_aux() {
+    MESSAGE1="$1"
+    MESSAGE2="$2"
+    PID_DIR="$3"
+    shift 3
     if [ -n "$1" ]; then
-        info "Stopping master: $@"
+        zerod_log "${MESSAGE1}: $@"
         kill $@
         waitpids $@
-        for pid in $@; do rm "${ZEROD_RESTART_PID_DIR}/${pid}"; done
-        info "+Stopped master: $@"
+        for pid in $@; do rm "${PID_DIR}/${pid}"; done
+        zerod_log "${MESSAGE2}: $@"
     fi
 }
+
+stop_pids() { stop_pids_aux "Stopping" "+Stopped" "$ZEROD_PID_DIR" $@; }
+stop_master_pids() { stop_pids_aux "Stopping master" "+Stopped master" "$ZEROD_RESTART_PID_DIR" $@; }
 
 logging_handle() {
     $unbuffered awk \'{printf \"$1\" strftime\(\"%F\|%T\|\", systime\(\)\) \$0 \"\\n\"}\'
@@ -153,15 +161,19 @@ mkdir -p "$ZEROD_TEMP_DIR" "$ZEROD_PID_DIR" "$ZEROD_RESTART_PID_DIR"
 
 [ -z "$CMD" ] && crit "Required parameter \`CMD\` not set" && show_help && exit 1
 
-RUNCMD="bash -c \"${CMD} & PIDFILE=\\\"${ZEROD_PID_DIR}/\\\$!\\\"; echo -n ${STARTUP_HASH} > \\\"\\\$PIDFILE\\\"; wait \\\$!; rm -f \\\"\\\$PIDFILE\\\"\"" #"
+TOLOG_STOPPED="$(tolog_template "Finished: \\\`\$!\\\` stopped with returncode: \\\`\$?\\\`")"
+RUNCMD="${CMD} & PIDFILE=\"${ZEROD_PID_DIR}/\$!\"; echo -n ${STARTUP_HASH} > \"\$PIDFILE\"; wait \$!; ${TOLOG_STOPPED}; rm -f \"\$PIDFILE\"" #"
 
 if [ -n "$RESTART" ]; then
-    RUNCMD="bash -c 'echo ${STARTUP_HASH} > \"${ZEROD_RESTART_PID_DIR}/\$\$\"; while true; do ${RUNCMD}; sleep 1; done;'"
+    RUNCMD="echo -n ${STARTUP_HASH} > \"${ZEROD_RESTART_PID_DIR}/\$\$\"; while true; do ${RUNCMD}; sleep 1; done;"
 fi
+
+RUNCMD="bash -c '${RUNCMD}'"
 
 COLORIZE=""\
 "s%^${LOG_STDOUT}%${COLOR_OUT}%g;"\
 "s%^${LOG_STDERR}%${COLOR_ERR}%g;"\
+"s%^${LOG__ZEROD}%${COLOR_DBG}%g;"\
 "s%$%${COLOR_CLR}%g"
 
 # ===
@@ -173,7 +185,7 @@ case $1 in
             pids=`pidlist`
             [ -n "$pids" ] && crit "Already runing: ${pids}" && exit 1
         fi
-        info "Starting: \`$CMD\`"
+        zerod_log "Starting: \`$CMD\`"
         bash -c "nohup ${RUNCMD} \
             > >(`logging_handle $LOG_STDOUT` >> '$LOG') \
             2> >(`logging_handle $LOG_STDERR` >> '$LOG') &";
