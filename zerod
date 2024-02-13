@@ -104,7 +104,7 @@ do_init() {
     [ ! -d "$ZEROD_DIR" ] && mkdir "$ZEROD_DIR"
     [ ! -d "$SCRIPT_DIR" ] && mkdir "$SCRIPT_DIR"
     [ -f "$CONFIG" ] && crit "Config \`$CONFIG\` already exists" && exit 1
-    echo "$CONFIG_EXAMPLE" > "$CONFIG"
+    echo "$CONFIG_EXAMPLE" > "$CONFIG" && info "Config \`$CONFIG\` initialized"
     exit 0
 }
 
